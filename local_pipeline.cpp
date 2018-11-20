@@ -31,7 +31,7 @@
 #include <sstream>
 #include <string>
 
-#include <boost/filesystem.hpp>
+#include <boost/filesystem.hpp>8
 
 #include <pcl/keypoints/iss_3d.h>
 #include <pcl/features/normal_3d.h>
@@ -45,6 +45,7 @@
 #include <pcl/features/shot_omp.h>
 #include <pcl/features/cvfh.h>
 #include <pcl/features/our_cvfh.h>
+#include <pcl/registration/icp.h>
 
 
 #include <pcl/visualization/pcl_visualizer.h>
@@ -61,6 +62,9 @@
 
 #include <pcl/console/parse.h>
 #include <pcl/console/print.h>
+#include <flann/io/hdf5.h>
+
+
 ros::Publisher pub;
 
 typedef pcl::PointXYZRGB PointType;
@@ -83,8 +87,10 @@ typedef pcl::Histogram<90> CRH90;
 typedef std::pair<std::string, std::vector<float> > vfh_model;
 
 
-sensor_msgs::PointCloud2 kp_scene_msg, kp_object_msg, cloud_pass_msg, object_msg, down_cloud_msg, objects_msg, plane_msg, convex_hull_msg;
-ros::Publisher pub_kp_scene, pub_kp_object, pub_cloud_pass, pub_object, pub_down_cloud, pub_objects, pub_plane, pub_convex_hull;
+sensor_msgs::PointCloud2 kp_scene_msg, kp_object_msg, cloud_pass_msg, object_msg, down_cloud_msg, objects_msg, plane_msg,
+convex_hull_msg, choosen_msg, final_msg;
+ros::Publisher pub_kp_scene, pub_kp_object, pub_cloud_pass, pub_object, pub_down_cloud, pub_objects, pub_plane,
+pub_convex_hull, pub_choosen, pub_final;
 
 pcl::PointCloud<PointType>::Ptr received_cloud_ptr (new pcl::PointCloud<PointType>);
 
@@ -192,11 +198,7 @@ void viz_cb (pcl::visualization::PCLVisualizer& viz)
     {viz.addPointCloud (cloud_pass, "cloudpass");
       viz.resetCameraViewpoint("cloudpass");
     }
-
-
-
   }
-
 
 }
 
@@ -323,6 +325,7 @@ void publishPointCloud (const CloudConstPtr &cloud, sensor_msgs::PointCloud2 msg
 {
   pcl::toROSMsg(*cloud.get(), msgs);
   msgs.header.frame_id = "camera";
+  //msgs.header.frame_id = "camera_color_frame";
   pub.publish(msgs);
 }
 void displayClusters(const CloudConstPtr &cloud, boost::shared_ptr<pcl::visualization::PCLVisualizer> &viewer)
@@ -458,9 +461,10 @@ void computeCVFHDescriptor(const CloudConstPtr &cloud, pcl::PointCloud<pcl::Norm
   cvfh.compute(*descriptors);
 }
 
-void computeCRH(const CloudConstPtr &cloud, pcl::PointCloud<pcl::Normal>::Ptr &normals,
-           pcl::PointCloud<CRH90>::Ptr &histogram, boost::shared_ptr<Eigen::Vector4f> &centroid)
+void computeCRH(const CloudConstPtr &cloud,
+           pcl::PointCloud<CRH90>::Ptr &histogram, Eigen::Vector4f &centroid)
 {
+  pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
   pcl::NormalEstimation<XYZ, pcl::Normal> normalEstimation;
   normalEstimation.setInputCloud(cloud);
   normalEstimation.setRadiusSearch(0.03);
@@ -471,8 +475,8 @@ void computeCRH(const CloudConstPtr &cloud, pcl::PointCloud<pcl::Normal>::Ptr &n
   pcl::CRHEstimation<XYZ, pcl::Normal, pcl::Histogram<90>> crh;
   crh.setInputCloud(cloud);
   crh.setInputNormals(normals);
-  pcl::compute3DCentroid(*cloud, *centroid);
-  crh.setCentroid(*centroid);
+  pcl::compute3DCentroid(*cloud, centroid);
+  crh.setCentroid(centroid);
   crh.compute(*histogram);
 }
 void computeCentroidsAlignment(const CloudConstPtr &scene, const CloudConstPtr &object,
@@ -495,6 +499,46 @@ loadHist (const std::string filename, const pcl::PointCloud<pcl::VFHSignature308
   vfh.first = filename;
   return (true);
 }
+bool loadHisto (const boost::filesystem::path &path, vfh_model &vfh)
+  {
+  int vfh_idx;
+    // Load the file as a PCD
+    try
+    {
+      pcl::PCLPointCloud2 cloud;
+      int version;
+      Eigen::Vector4f origin;
+      Eigen::Quaternionf orientation;
+      pcl::PCDReader r;
+      int type; unsigned int idx;
+      r.readHeader (path.string (), cloud, origin, orientation, version, type, idx);
+
+      vfh_idx = pcl::getFieldIndex (cloud, "vfh");
+      if (vfh_idx == -1)
+        return (false);
+      if ((int)cloud.width * cloud.height != 1)
+        return (false);
+    }
+    catch (const pcl::InvalidConversionException&)
+    {
+      return (false);
+    }
+
+    // Treat the VFH signature as a single Point Cloud
+    pcl::PointCloud <pcl::VFHSignature308> point;
+    pcl::io::loadPCDFile (path.string (), point);
+    vfh.second.resize (308);
+
+    std::vector <pcl::PCLPointField> fields;
+    pcl::getFieldIndex (point, "vfh", fields);
+
+    for (size_t i = 0; i < fields[vfh_idx].count; ++i)
+    {
+      vfh.second[i] = point.points[0].histogram[i];
+    }
+    vfh.first = path.string ();
+    return (true);
+  }
 void
 loadModels (const boost::filesystem::path &base_dir, const std::string &extension,
             std::vector<vfh_model> &models,
@@ -524,7 +568,7 @@ loadModels (const boost::filesystem::path &base_dir, const std::string &extensio
       pcl::PointCloud<pcl::Normal>::Ptr normals_temp (new pcl::PointCloud<pcl::Normal>);
       pcl::PointCloud<pcl::VFHSignature308>::Ptr descriptors_temp (new pcl::PointCloud<pcl::VFHSignature308>);
       pcl::PointCloud<CRH90>::Ptr histograms_temp (new pcl::PointCloud<CRH90>);
-      boost::shared_ptr<Eigen::Vector4f> centroids_temp (new Eigen::Vector4f);
+      Eigen::Vector4f centroids_temp;
 
        //if (loadHist (base_dir / it->path ().filename (), model))
       //ROS_WARN_STREAM(it->path().filename()  );
@@ -533,26 +577,27 @@ loadModels (const boost::filesystem::path &base_dir, const std::string &extensio
       ROS_WARN_STREAM(name );
       pcl::io::loadPCDFile(name, *model);
       model_partial_views.push_back (model);
-      computeCVFHDescriptor(model, normals_temp, descriptors_temp);
+      //computeCVFHDescriptor(model, normals_temp, descriptors_temp);
+      computeOURCVFHDescriptor(model, normals_temp, descriptors_temp);
 
       vfh_model m;
       if (loadHist (it->path().filename().string(), descriptors_temp ,m))
       models.push_back (m);
 
       model_partial_views_descriptors.push_back(descriptors_temp);
-      computeCRH(model, normals_temp, histograms_temp, centroids_temp);
+     // computeCRH(model, histograms_temp, centroids_temp);
       model_partial_views_histograms.push_back(histograms_temp);
-      model_partial_views_centroids.push_back(centroids_temp);
+      //model_partial_views_centroids.push_back(centroids_temp);
 
       //Saving histograms
-      std::string name_save = name+"vfh.pcd";
-      pcl::io::savePCDFileASCII(name_save, *descriptors_temp);
+      //std::string name_save = name+"vfh.pcd";
+      //pcl::io::savePCDFileASCII(name_save, *descriptors_temp);
 
 
     }
   }
 }
-/*
+
 void
 loadFeatureModels (const boost::filesystem::path &base_dir, const std::string &extension,
                    std::vector<vfh_model> &models)
@@ -574,80 +619,239 @@ loadFeatureModels (const boost::filesystem::path &base_dir, const std::string &e
     {
       ROS_WARN_STREAM("Loaded "<<it->path().filename());
       vfh_model m;
-      if (loadHist (base_dir / it->path ().filename (), m))
+      if (loadHisto (base_dir / it->path ().filename (), m))
         models.push_back (m);
+      ROS_WARN_STREAM("Loaded "<< (unsigned long)models.size());
     }
   }
 }
-*/
+bool
+loadFileList (std::vector<vfh_model> &models, const std::string &filename)
+{
+  ifstream fs;
+  fs.open (filename.c_str ());
+  if (!fs.is_open () || fs.fail ())
+    return (false);
+
+  std::string line;
+  while (!fs.eof ())
+  {
+    getline (fs, line);
+    if (line.empty ())
+      continue;
+    vfh_model m;
+    m.first = line;
+    models.push_back (m);
+  }
+  fs.close ();
+  return (true);
+}
 void cloud_cb (const CloudConstPtr &cloud)
 {
-  boost::mutex::scoped_lock lock (mtx_);
+  std::string kdtree_idx_file_name = "kdtree.idx";
+  std::string training_data_h5_file_name = "training_data.h5";
+  std::string training_data_list_file_name = "training_data.list";
+
+////////////
+///Create training data
+//////////
+
+  if (!boost::filesystem::exists ("training_data.h5") || !boost::filesystem::exists ("training_data.list"))
+  {
+ //loadFeatureModels("/home/pfs-mt/Documents/cvfhs", extension, models);
+  loadModels("/home/pfs-mt/Documents/scanned_every_30_deg", extension, models, model_partial_views, model_partial_views_descriptors,
+                                model_partial_views_histograms, model_partial_views_centroids);
+  ROS_WARN_STREAM("Loading "<< (unsigned long)models.size());
+
+
+
+  flann::Matrix<float> data1 (new float[models.size () * models[0].second.size ()], models.size (), models[0].second.size ());
+    for (size_t i = 0; i < data1.rows; ++i)
+      for (size_t j = 0; j < data1.cols; ++j)
+        data1[i][j] = models[i].second[j];
+
+    ROS_WARN("Building the flann structure for %d elements...\n", (int)data.rows );
+
+    flann::save_to_file (data1, training_data_h5_file_name, "training_data");
+    std::ofstream fs;
+    fs.open (training_data_list_file_name.c_str ());
+      for (size_t u = 0; u < models.size (); ++u)
+        fs << models[u].first << "\n";
+      fs.close ();
+
+
+    flann::Index<flann::ChiSquareDistance<float> > index (data1, flann::KDTreeIndexParams (4));
+    index.buildIndex ();
+    index.save(kdtree_idx_file_name);
+    ROS_WARN("Building the kdtree index  for %d elements...\n", (int)data1.rows );
+  }
+
+  /////////
+  /// Load training data
+  //////////
+    flann::Matrix<float> data;
+    loadFileList (models, training_data_list_file_name);
+    flann::load_from_file (data, training_data_h5_file_name, "training_data");
+    flann::Index<flann::ChiSquareDistance<float> > index (data, flann::SavedIndexParams ("kdtree.idx"));
+    index.buildIndex ();
+
+
   cloud_pass_.reset (new Cloud);
   cloud_pass_downsampled_.reset (new Cloud);
   filterPassThrough (cloud, cloud_pass_);
   gridSampleApprox (cloud_pass_, cloud_pass_downsampled_, downsampling_grid_size_);
   computePlaneExtraction(cloud_pass_downsampled_, plane, convex_hull, objects);
+
+
+
+
+
+
+  /////////////
+  /// Segmentation
+  /////////////
+
   boost::shared_ptr<std::vector<pcl::PointIndices> > clusters (new std::vector<pcl::PointIndices>);
   computeEuclideanSegmentation(objects, clusters);
   ROS_WARN_STREAM(clusters->size());
 
-  flann::Index<flann::ChiSquareDistance<float> > index (data, flann::LinearIndexParams ());
-  index.buildIndex ();
+  //char cluster[1024];
 
-  ROS_WARN_STREAM("Building the kdtree index  for elements...\n" << (int)data.rows );
+  ////////////////
+  /// Search clusters for object
+  /////////////////
 
-  char cluster[1024];
   int j=1;
+  typedef std::pair <int, float> match;
+  std::vector<match> best_match;
+  pcl::PointCloud<XYZ>::Ptr choosen_cluster (new pcl::PointCloud<XYZ>);
+  int score_distance;
+  std::string choosen_model;
   for(std::vector<pcl::PointIndices>::const_iterator i = clusters->begin(); i != clusters->end(); ++i)
   {
-    sprintf (cluster, "clusters_%d", j);
+    //sprintf (cluster, "clusters_%d", j);
     pcl::PointCloud<XYZ>::Ptr cluster (new pcl::PointCloud<XYZ>);
     for (std::vector<int>::const_iterator point = i->indices.begin(); point != i->indices.end(); point++)
+    {
+      //ROS_WARN_STREAM("point index: "<<*point);
       cluster->points.push_back(objects->points[*point]);
+    }
     cluster->width = cluster->points.size();
     cluster->height = 1;
     cluster->is_dense = true;
-    j++;
-    computeCVFHDescriptor(cluster, normals, descriptors);
-
+    //computeCVFHDescriptor(cluster, normals, descriptors);
+    computeOURCVFHDescriptor(cluster, normals, descriptors);
+    //ROS_WARN_STREAM("compute descriptors and normals");
     vfh_model histogram;
-    loadHist("cluster", descriptors, histogram);
+    for (size_t o = 0; o < 308; ++o)
+      {
+        histogram.second.push_back(descriptors->points[0].histogram[o]);
+    }
+    //ROS_WARN_STREAM("got histograms");
+    //loadHist("cluster", descriptors, histogram);
 
-    int k = 6;
+    int k = 5;
 
     double thresh = DBL_MAX;
     flann::Matrix<int> k_indices;
     flann::Matrix<float> k_distances;
-
+    //ROS_WARN_STREAM("before nearest");
     nearestKSearch(index, histogram, k, k_indices, k_distances);
-   /* ROS_WARN("The closest %d neighbors for cluster %d are:\n", k, i);
-    for(int l = 0; l < k; l++)
-      ROS_WARN("    %d - %d (%d) with a distance of: %f\n",
-               l, models.at(k_indices[0][l]).first.c_str(), k_indices[0][l], k_distances[0][l]);*/
+    ROS_WARN_STREAM("The closest" << k << " neighbors for cluster are:\n" << j );
+    for(int l = 0; l < k; ++l)
+    {
+     ROS_WARN("    %d - %s (%d) with a distance of: %f\n",
+               l, models.at(k_indices[0][l]).first.c_str(), k_indices[0][l], k_distances[0][l]);
+
+   }
+    match m;
+    m.second = j;
+    m.first = k_distances[0][0];
+    best_match.push_back(m);
+    score_distance = k_distances[0][0];
+    if(k_distances[0][0] <= score_distance)
+    {
+      pcl::copyPointCloud(*cluster,*choosen_cluster);
+      choosen_model = models.at(k_indices[0][0]).first.c_str();
+    }
+
+    j++;
 
   }
+  if(!choosen_cluster->empty())
+   { //Choose best matching cluster
+    if(best_match.size()>0)
+    {
+    std::sort(best_match.begin(), best_match.end());
+    int best_match_idx = best_match.at(0).second;
+    ROS_WARN_STREAM("choosen cluster: " << best_match_idx);
+      }
+
+    //publishPointCloud(choosen_cluster, choosen_msg, pub_choosen);
+
+    std::string clus = "/home/pfs-mt/Documents/scanned_every_30_deg/cluster.pcd";
+    if(!boost::filesystem::exists(clus)){
+    pcl::io::savePCDFile(clus, *choosen_cluster);
+    }
+    /////////////////////
+    //CRH Alignment
+    ////////////////////
 
 
-  /*
-  computeCVFHDescriptor(objects, normals, descriptors);
-  boost::shared_ptr<Eigen::Vector4f> scene_centroid (new Eigen::Vector4f);
-  Eigen::Vector4f object_centroid;
-  if(histogram_object->empty())
-  {
-    computeCRH(target_cloud_, normals_object, histogram_object, scene_centroid);
-  }
+    pcl::PointCloud<XYZ>::Ptr viewCloud(new pcl::PointCloud<XYZ>);
+    pcl::PointCloud<CRH90>::Ptr viewCRH (new pcl::PointCloud<CRH90>);
+    std::string source_file = "/home/pfs-mt/Documents/scanned_every_30_deg/" + choosen_model;
+    pcl::io::loadPCDFile(source_file, *viewCloud);
+    pcl::PointCloud<CRH90>::Ptr clusterCRH(new pcl::PointCloud<CRH90>);
+    Eigen::Vector4f viewCentroid;
 
-*/
+    Eigen::Vector4f clusterCentroid;
+
+    computeCRH(viewCloud, viewCRH, viewCentroid);
+    computeCRH(choosen_cluster, clusterCRH, clusterCentroid);
+
+    pcl::CRHAlignment<XYZ, 90> alignment;
+    alignment.setInputAndTargetView(choosen_cluster, viewCloud);
+    Eigen::Vector3f view_centroids_3f(viewCentroid[0], viewCentroid[1], viewCentroid[2]);
+    Eigen::Vector3f cluster_centroid_3f(clusterCentroid[0], clusterCentroid[1], clusterCentroid[2]);
+    alignment.setInputAndTargetCentroids(cluster_centroid_3f, view_centroids_3f);
 
 
-  /*
-  pcl::toROSMsg(*cloud_pass_downsampled_, down_cloud_msg );
-   //cloud_pass_downsampled_.header.frame_id = "world";
-   pub_down_cloud.publish(down_cloud_msg );
-*/
+    publishPointCloud(viewCloud, choosen_msg, pub_choosen);
+    //Roll angle
+    std::vector<float> angles;
+    alignment.computeRollAngle(*clusterCRH, *viewCRH, angles);
+
+    if(angles.size() > 0)
+    {
+      ROS_WARN("List of angles where the histograms correlate:");
+          for (int ii=0; ii<angles.size(); ii++)
+          ROS_WARN_STREAM("\t" << angles.at(ii) << "degrees");
+
+    }
 
 
+    //////////////
+    //ICP refinement
+    ///////////
+
+    pcl::PointCloud<XYZ>::Ptr final_cloud(new pcl::PointCloud<XYZ>);
+    pcl::IterativeClosestPoint<XYZ, XYZ> registration;
+    registration.setInputSource(viewCloud);
+    registration.setInputTarget(choosen_cluster);
+    registration.align(*final_cloud);
+    if (registration.hasConverged())
+    {
+      ROS_WARN_STREAM("ICP converged. The score is: " << registration.getFitnessScore());
+      ROS_WARN_STREAM("Transformation matrix: " << registration.getFinalTransformation());
+
+          }
+    else
+    ROS_WARN_STREAM("ICP did not converge");
+
+    publishPointCloud(final_cloud, final_msg, pub_final);
+
+}
 }
 void roscloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
@@ -660,6 +864,7 @@ int main (int argc, char** argv) {
 
   ros::init (argc, argv, "my_pcl_tutorial");
   ros::NodeHandle nh;
+  /*
   if (model_partial_views.empty())
   {
   loadModels("/home/pfs-mt/Documents/scanned_every_30_deg", extension, models, model_partial_views, model_partial_views_descriptors,
@@ -676,7 +881,7 @@ int main (int argc, char** argv) {
   ROS_WARN("Building the flann structure for %d elements...\n", (int)data.rows );
 
 }
-
+*/
 
   /*
   if (model_partial_views.empty())
@@ -693,10 +898,12 @@ int main (int argc, char** argv) {
 
 
   ros::Subscriber sub = nh.subscribe ("/stereo/points2", 1, roscloud_cb);
+ // ros::Subscriber sub = nh.subscribe ("/camera/depth_registered/points", 1, roscloud_cb);
   pub_objects=nh.advertise<sensor_msgs::PointCloud2>("objects",1);
   pub_convex_hull=nh.advertise<sensor_msgs::PointCloud2>("convex_hull",1);
   pub_plane=nh.advertise<sensor_msgs::PointCloud2>("plane",1);
-
+  pub_choosen=nh.advertise<sensor_msgs::PointCloud2>("choosen",1);
+  pub_final=nh.advertise<sensor_msgs::PointCloud2>("final",1);
 
 
   //pub_kp_scene=nh.advertise<sensor_msgs::PointCloud2>("kp_scene",1);

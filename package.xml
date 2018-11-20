@@ -33,7 +33,7 @@
   <!-- Examples: -->
   <!-- Use depend as a shortcut for packages that are both build and exec dependencies -->
   <!--   <depend>roscpp</depend> -->
-  <!--   Note that this is equivalent to the following: -->
+  <!--   Note that thipcl_conversions pcl_ros is equivalent to the following: -->
   <!--   <build_depend>roscpp</build_depend> -->
   <!--   <exec_depend>roscpp</exec_depend> -->
   <!-- Use build_depend for packages you need at compile time: -->
@@ -49,9 +49,9 @@
   <!-- Use doc_depend for packages you need only for building documentation: -->
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>pcl_conversions pcl_ros roscpp sensor_msgs</build_depend>
-  <build_export_depend>pcl_conversions pcl_ros roscpp sensor_msgs</build_export_depend>
-  <exec_depend>pcl_conversions pcl_ros roscpp sensor_msgs</exec_depend>
+  <build_depend> message_runtime message_generation pcl_conversions pcl_ros roscpp sensor_msgs image_transport rospy std_msgs roslaunch cv_bridge</build_depend>
+  <build_export_depend> message_runtime message_generation pcl_conversions pcl_ros roscpp sensor_msgs image_transport rospy std_msgs roslaunch cv_bridge</build_export_depend>
+  <exec_depend>  message_runtime message_generation pcl_conversions pcl_ros roscpp sensor_msgs image_transport rospy std_msgs roslaunch cv_bridge</exec_depend>
   <build_depend>libpcl-all-dev</build_depend>
   <exec_depend>libpcl-all</exec_depend>
 
