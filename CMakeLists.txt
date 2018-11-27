@@ -8,8 +8,14 @@ add_compile_options(-std=c++11)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  pcl_conversions pcl_ros roscpp sensor_msgs message_generation OpenCV image_transport cv_bridge
+  pcl_conversions pcl_ros roscpp sensor_msgs message_generation OpenCV
+  image_transport cv_bridge
+
 )
+find_package(Qt5Widgets REQUIRED)
+find_package(Qt5Core REQUIRED)
+
+
 find_package(HDF5 REQUIRED)
 
 catkin_package(
@@ -24,14 +30,15 @@ include ${catkin_INCLUDE_DIRS}
 ${OpenCV_LIBRARIES}
 )
 include_directories(${HDF5_INCLUDE_DIRS})
+include_directories(${Qt5Widgets_INCLUDE_DIRS})
 add_library(${PROJECT_NAME}
 
 src/demo3.cpp
 )
 
-add_executable(example3 src/demo3main.cpp)
-target_link_libraries(example3 ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES}
-    ${Boost_LIBRARIES} ${FLANN_LIBRARIES})
+#add_executable(example3 src/demo3main.cpp)
+#target_link_libraries(example3 ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES}
+  #  ${Boost_LIBRARIES} ${FLANN_LIBRARIES})
 
 add_executable(akit_perception akit_perception.cpp)
 target_link_libraries(akit_perception ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES}
@@ -43,7 +50,7 @@ target_link_libraries(pass_through ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIB
 
 add_executable(ipa_akit_detection ipa_akit_detection.cpp)
 target_link_libraries(ipa_akit_detection ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES}
-    ${Boost_LIBRARIES} ${FLANN_LIBRARIES})
+    ${Boost_LIBRARIES} ${FLANN_LIBRARIES} Qt5::Widgets)
 
 add_executable(robust_pose robust_pose.cpp)
 target_link_libraries(robust_pose ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES}
@@ -53,8 +60,8 @@ target_link_libraries(robust_pose ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBR
 add_executable(example demo.cpp)
 target_link_libraries(example ${catkin_LIBRARIES})
 
-add_executable(example2 demo2.cpp)
-target_link_libraries(example2 ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+#add_executable(example2 demo2.cpp)
+#target_link_libraries(example2 ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
 add_executable(example4 demo3backup.cpp)
 target_link_libraries(example4 ${catkin_LIBRARIES} ${PCL_LIBRARIES}

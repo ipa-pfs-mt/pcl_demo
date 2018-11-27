@@ -31,7 +31,7 @@
 #include <sstream>
 #include <string>
 
-#include <boost/filesystem.hpp>8
+#include <boost/filesystem.hpp>
 
 #include <pcl/keypoints/iss_3d.h>
 #include <pcl/features/normal_3d.h>

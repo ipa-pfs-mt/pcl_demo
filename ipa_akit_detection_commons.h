@@ -62,6 +62,9 @@
 #include <pcl/features/crh.h>
 #include <pcl/recognition/crh_alignment.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/organized_connected_component_segmentation.h>
+#include <pcl/segmentation/organized_multi_plane_segmentation.h>
+
 
 #include <pcl/console/parse.h>
 #include <pcl/console/print.h>
