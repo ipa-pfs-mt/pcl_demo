@@ -9,7 +9,18 @@
 #include <condition_variable>
 #include <pcl/search/kdtree.h>
 
+#include <pcl/segmentation/edge_aware_plane_comparator.h>
+
+#include <pcl/segmentation/euclidean_cluster_comparator.h>
+#include <pcl/segmentation/euclidean_plane_coefficient_comparator.h>
+#include <pcl/segmentation/organized_connected_component_segmentation.h>
+#include <pcl/segmentation/organized_multi_plane_segmentation.h>
+#include <pcl/segmentation/planar_polygon_fusion.h>
+#include <Eigen/Dense>
+
+
 using namespace std;
+using namespace pcl;
 
 typedef pcl::PointXYZRGBA PointT;
 typedef pcl::PointCloud<PointT> Cloud;
@@ -46,6 +57,8 @@ protected:
   bool data_modified_;
   size_t previous_data_size_;
   size_t previous_clusters_size_;
+  pcl::PointCloud<PointT>::CloudVectorType prev_clusters_;
+
 
   bool display_normals_;
   bool display_curvature_;
@@ -54,13 +67,32 @@ protected:
   bool use_planar_refinement_;
   bool use_clustering_;
 
+
+  //Datasets
   pcl::PointCloud<PointT> prev_cloud_;
   pcl::PointCloud<pcl::Normal> prev_normals_;
+  pcl::PointIndices::Ptr inliers_cylinder_;
+  pcl::ModelCoefficients::Ptr coefficients_cylinder_;
+  pcl::PointCloud<PointT>::Ptr cloud_filtered;
+
+//Tools
   std::vector<pcl::PlanarRegion<PointT>, Eigen::aligned_allocator<pcl::PlanarRegion<PointT> > > prev_regions_;
+  pcl::OrganizedMultiPlaneSegmentation<PointT, pcl::Normal, pcl::Label> mps;
+  pcl::IntegralImageNormalEstimation<PointT, pcl::Normal> ne;
+ pcl::EdgeAwarePlaneComparator<PointT, pcl::Normal>::Ptr eapc;
+ pcl::PassThrough<PointT> pass;
+ pcl::SACSegmentationFromNormals<PointT, pcl::Normal> seg;
+ pcl::EuclideanPlaneCoefficientComparator<PointT, pcl::Normal>::Ptr euclidean_comparator_;
+  pcl::EuclideanClusterComparator<PointT, pcl::Normal, pcl::Label>::Ptr euclidean_cluster_comparator_;
+   pcl::PlaneCoefficientComparator<PointT, pcl::Normal>::Ptr plane_comparator_;
+
 
   void run();
   void removePreviousDataFromScreen (size_t prev_models_size, size_t prev_clusters_size, boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer);
-
+  void displayPlanarRegions (std::vector<pcl::PlanarRegion<PointT>, Eigen::aligned_allocator<pcl::PlanarRegion<PointT> > > &regions,
+                        boost::shared_ptr<pcl::visualization::PCLVisualizer> _vis);
+  void displayEuclideanClusters (const pcl::PointCloud<PointT>::CloudVectorType &clusters,
+  boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer);
 
   CloudPtr received_cloud_ptr;
   CloudPtr input_pointcloud;
